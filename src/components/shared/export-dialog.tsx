@@ -3,7 +3,12 @@ import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useCanvasStore } from '@/stores/canvas-store'
+import { useDocumentStore } from '@/stores/document-store'
 import { exportToPNG, exportToSVG } from '@/utils/export'
+import { exportToPptx } from '@/utils/pptx-export'
+import { syncCanvasPositionsToStore } from '@/canvas/use-canvas-sync'
+
+type ExportFormat = 'png' | 'svg' | 'pptx'
 
 interface ExportDialogProps {
   open: boolean
@@ -11,12 +16,17 @@ interface ExportDialogProps {
 }
 
 export default function ExportDialog({ open, onClose }: ExportDialogProps) {
-  const [format, setFormat] = useState<'png' | 'svg'>('png')
+  const [format, setFormat] = useState<ExportFormat>('png')
   const [scale, setScale] = useState(2)
   const [selectedOnly, setSelectedOnly] = useState(false)
+  const [pptxScope, setPptxScope] = useState<'all' | 'current'>('all')
+  const [exporting, setExporting] = useState(false)
   const fabricCanvas = useCanvasStore((s) => s.fabricCanvas)
   const hasSelection = useCanvasStore(
     (s) => s.selection.selectedIds.length > 0,
+  )
+  const hasMultiplePages = useDocumentStore(
+    (s) => (s.document.pages?.length ?? 0) > 1,
   )
   const dialogRef = useRef<HTMLDivElement>(null)
 
@@ -31,7 +41,21 @@ export default function ExportDialog({ open, onClose }: ExportDialogProps) {
 
   if (!open) return null
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    if (format === 'pptx') {
+      setExporting(true)
+      try {
+        syncCanvasPositionsToStore()
+        const doc = useDocumentStore.getState().document
+        const activePageId = useCanvasStore.getState().activePageId
+        await exportToPptx(doc, activePageId, { scope: pptxScope })
+      } finally {
+        setExporting(false)
+      }
+      onClose()
+      return
+    }
+
     if (!fabricCanvas) return
     if (format === 'png') {
       exportToPNG(fabricCanvas, {
@@ -62,7 +86,7 @@ export default function ExportDialog({ open, onClose }: ExportDialogProps) {
         <div className="mb-3">
           <label className="text-xs text-muted-foreground block mb-1">Format</label>
           <div className="flex gap-2">
-            {(['png', 'svg'] as const).map((f) => (
+            {(['png', 'svg', 'pptx'] as const).map((f) => (
               <button
                 key={f}
                 type="button"
@@ -104,8 +128,32 @@ export default function ExportDialog({ open, onClose }: ExportDialogProps) {
           </div>
         )}
 
-        {/* Selected only */}
-        {hasSelection && (
+        {/* Page scope (PPTX only, when multiple pages exist) */}
+        {format === 'pptx' && hasMultiplePages && (
+          <div className="mb-3">
+            <label className="text-xs text-muted-foreground block mb-1">Pages</label>
+            <div className="flex gap-2">
+              {([['all', 'All pages'], ['current', 'Current page']] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setPptxScope(value)}
+                  className={cn(
+                    'flex-1 text-xs py-1.5 rounded transition-colors',
+                    pptxScope === value
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Selected only (raster/SVG only) */}
+        {format !== 'pptx' && hasSelection && (
           <label className="flex items-center gap-2 mb-4 cursor-pointer">
             <input
               type="checkbox"
@@ -120,11 +168,11 @@ export default function ExportDialog({ open, onClose }: ExportDialogProps) {
         {/* Export button */}
         <Button
           onClick={handleExport}
-          disabled={!fabricCanvas}
+          disabled={format === 'pptx' ? exporting : !fabricCanvas}
           className="w-full"
           size="sm"
         >
-          Export {format.toUpperCase()}
+          {exporting ? 'Exporting...' : `Export ${format.toUpperCase()}`}
         </Button>
       </div>
     </div>
